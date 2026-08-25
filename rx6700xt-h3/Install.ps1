@@ -35,6 +35,32 @@ function Invoke-External {
     }
 }
 
+function Get-NormalizedTextSha256 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$ReturnText
+    )
+
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    try {
+        $text = $strictUtf8.GetString([IO.File]::ReadAllBytes($Path))
+    } catch {
+        throw "$Path is not valid UTF-8 text."
+    }
+    $text = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+    if ($ReturnText) {
+        return $text
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($utf8NoBom.GetBytes($text)))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
 function Test-PinnedPython {
     param([Parameter(Mandatory = $true)][string]$Candidate)
 
@@ -325,10 +351,18 @@ function Install-Int8Patch {
     if (-not (Test-Path $optimizationPatch)) {
         throw "Missing gfx1031 W4A8 optimization patch: $optimizationPatch"
     }
-    $patchHash = (Get-FileHash $optimizationPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+    # Git checkouts on Windows may convert a text patch from LF to CRLF. Verify
+    # the canonical LF form, then apply that exact form so line-ending policy
+    # cannot change the authenticated patch or Git's context matching.
+    $patchHash = Get-NormalizedTextSha256 $optimizationPatch
     if ($patchHash -ne $node.local_patch_sha256) {
         throw "W4A8 optimization patch hash mismatch. Expected $($node.local_patch_sha256), got $patchHash."
     }
+    New-Item -ItemType Directory -Path $Downloads -Force | Out-Null
+    $applyPatch = Join-Path $Downloads "comfyui-int8-fast-rocm-gfx1031.normalized.patch"
+    $normalizedPatchText = Get-NormalizedTextSha256 $optimizationPatch -ReturnText
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($applyPatch, $normalizedPatchText, $utf8NoBom)
 
     $customNodes = Join-Path $Root "custom_nodes"
     $destination = Join-Path $customNodes "ComfyUI-INT8-Fast-ROCM"
@@ -348,7 +382,7 @@ function Install-Int8Patch {
 
     $expectedDirtyPaths = @("int8_fused_kernel.py", "rocm_int8_kitchen_patch.py")
     $dirtyPaths = @($dirty | ForEach-Object { $_.Substring(3).Trim('"') })
-    & $git.Source -C $destination apply --reverse --check $optimizationPatch 2>$null
+    & $git.Source -C $destination apply --reverse --check $applyPatch 2>$null
     $optimizationAlreadyApplied = $LASTEXITCODE -eq 0
     $onlyExpectedChanges = $dirtyPaths.Count -eq $expectedDirtyPaths.Count -and
         @($dirtyPaths | Where-Object { $_ -notin $expectedDirtyPaths }).Count -eq 0
@@ -377,14 +411,14 @@ function Install-Int8Patch {
 
     if (-not $optimizationAlreadyApplied) {
         Invoke-External -FilePath $git.Source -ArgumentList @(
-            "-C", $destination, "apply", "--check", $optimizationPatch
+            "-C", $destination, "apply", "--check", $applyPatch
         )
         Invoke-External -FilePath $git.Source -ArgumentList @(
-            "-C", $destination, "apply", $optimizationPatch
+            "-C", $destination, "apply", $applyPatch
         )
     }
 
-    & $git.Source -C $destination apply --reverse --check $optimizationPatch 2>$null
+    & $git.Source -C $destination apply --reverse --check $applyPatch 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw "The gfx1031 W4A8 optimization was not applied cleanly."
     }
