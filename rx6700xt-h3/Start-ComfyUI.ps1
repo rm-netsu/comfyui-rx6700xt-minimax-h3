@@ -24,6 +24,78 @@ $PythonDir = Join-Path $Root "python_env"
 $Python = Join-Path $PythonDir "python.exe"
 $RocmSdk = Join-Path $PythonDir "Scripts\rocm-sdk.exe"
 $GpuLog = Join-Path $Root "gpu_detect_debug.log"
+$GpuResultLog = Join-Path $Root "gpu_detect_result.log"
+
+function ConvertTo-NativeArgument {
+    param([AllowEmptyString()][string]$Argument)
+
+    if ($null -eq $Argument) {
+        $Argument = ""
+    }
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    # Quote according to CommandLineToArgvW / the Microsoft C runtime rules.
+    # Start-Process joins ArgumentList into one command line on Windows
+    # PowerShell 5.1, so paths containing spaces must be escaped explicitly.
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append([char]34)
+    $backslashes = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq [char]92) {
+            $backslashes++
+            continue
+        }
+        if ($character -eq [char]34) {
+            for ($index = 0; $index -lt (2 * $backslashes + 1); $index++) {
+                [void]$builder.Append([char]92)
+            }
+            [void]$builder.Append([char]34)
+        } else {
+            for ($index = 0; $index -lt $backslashes; $index++) {
+                [void]$builder.Append([char]92)
+            }
+            [void]$builder.Append($character)
+        }
+        $backslashes = 0
+    }
+    for ($index = 0; $index -lt (2 * $backslashes); $index++) {
+        [void]$builder.Append([char]92)
+    }
+    [void]$builder.Append([char]34)
+    return $builder.ToString()
+}
+
+function Invoke-NativeProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [string]$RedirectStandardOutput,
+        [string]$RedirectStandardError
+    )
+
+    # Start-Process keeps native stderr outside PowerShell's error stream.
+    # This prevents ordinary Python/ROCm diagnostics from becoming a
+    # terminating NativeCommandError under ErrorActionPreference=Stop.
+    $nativeArguments = @(
+        $ArgumentList | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }
+    )
+    $startParameters = @{
+        FilePath = $FilePath
+        ArgumentList = $nativeArguments
+        Wait = $true
+        PassThru = $true
+        NoNewWindow = $true
+    }
+    if ($RedirectStandardOutput) {
+        $startParameters["RedirectStandardOutput"] = $RedirectStandardOutput
+    }
+    if ($RedirectStandardError) {
+        $startParameters["RedirectStandardError"] = $RedirectStandardError
+    }
+    return Start-Process @startParameters
+}
 
 if (-not (Test-Path $Python) -or -not (Test-Path $RocmSdk)) {
     throw "The pinned runtime is missing. Run install-rx6700xt-h3.bat first."
@@ -35,17 +107,39 @@ if ($Profile -eq "Performance64GB" -and $TotalRamGiB -lt 56.0) {
     throw "Performance64GB requires at least 56 GiB of physical RAM. Detected $TotalRamGiB GiB. Use -Profile Balanced."
 }
 
-$detectedArch = (& $Python (Join-Path $Root "detect_gpu.py") 2>$GpuLog | Select-Object -Last 1).Trim()
-if ($LASTEXITCODE -ne 0 -or $detectedArch -ne "gfx1031") {
+$gpuProcess = Invoke-NativeProcess `
+    -FilePath $Python `
+    -ArgumentList @((Join-Path $Root "detect_gpu.py")) `
+    -RedirectStandardOutput $GpuResultLog `
+    -RedirectStandardError $GpuLog
+$detectedArch = [string](
+    Get-Content -LiteralPath $GpuResultLog -ErrorAction SilentlyContinue |
+        Where-Object { $_.Trim() } |
+        Select-Object -Last 1
+)
+$detectedArch = $detectedArch.Trim()
+if ($gpuProcess.ExitCode -ne 0 -or $detectedArch -ne "gfx1031") {
     throw "Expected gfx1031 but detected '$detectedArch'. See $GpuLog. No HSA architecture override will be used."
 }
 
-& $RocmSdk init
-if ($LASTEXITCODE -ne 0) {
+$rocmInitProcess = Invoke-NativeProcess -FilePath $RocmSdk -ArgumentList @("init")
+if ($rocmInitProcess.ExitCode -ne 0) {
     throw "rocm-sdk init failed. Run diagnose-rx6700xt-h3.bat for details."
 }
-$RocmRoot = (& $RocmSdk path --root | Select-Object -Last 1).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $RocmRoot) {
+$RocmPathLog = Join-Path $Root "rocm_sdk_root.log"
+$RocmPathErrorLog = Join-Path $Root "rocm_sdk_path_debug.log"
+$rocmPathProcess = Invoke-NativeProcess `
+    -FilePath $RocmSdk `
+    -ArgumentList @("path", "--root") `
+    -RedirectStandardOutput $RocmPathLog `
+    -RedirectStandardError $RocmPathErrorLog
+$RocmRoot = [string](
+    Get-Content -LiteralPath $RocmPathLog -ErrorAction SilentlyContinue |
+        Where-Object { $_.Trim() } |
+        Select-Object -Last 1
+)
+$RocmRoot = $RocmRoot.Trim()
+if ($rocmPathProcess.ExitCode -ne 0 -or -not $RocmRoot) {
     throw "Could not resolve the ROCm SDK root."
 }
 
@@ -158,8 +252,8 @@ Write-Host ""
 
 Push-Location $Root
 try {
-    & $Python @ComfyArgs
-    exit $LASTEXITCODE
+    $comfyProcess = Invoke-NativeProcess -FilePath $Python -ArgumentList $ComfyArgs
+    exit $comfyProcess.ExitCode
 } finally {
     Pop-Location
 }
