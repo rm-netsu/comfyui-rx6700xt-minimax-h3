@@ -35,6 +35,121 @@ function Invoke-External {
     }
 }
 
+function Test-PinnedPython {
+    param([Parameter(Mandatory = $true)][string]$Candidate)
+
+    if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $probe = & $Candidate -c "import struct, sys; print('.'.join(map(str, sys.version_info[:3]))); print(struct.calcsize('P') * 8); print(sys.base_prefix)" 2>$null
+        if ($LASTEXITCODE -ne 0 -or $probe.Count -lt 3) {
+            return $false
+        }
+        $version = [string]$probe[0]
+        $bits = [string]$probe[1]
+        $basePrefix = [string]$probe[2]
+        if ($version -ne [string]$Profile.python.version -or $bits -ne "64") {
+            return $false
+        }
+        $basePython = Join-Path $basePrefix "python.exe"
+        if (-not (Test-Path -LiteralPath $basePython -PathType Leaf)) {
+            return $false
+        }
+        $signature = Get-AuthenticodeSignature $basePython
+        return ($signature.Status -eq "Valid" -and $signature.SignerCertificate.Subject -match "Python Software Foundation")
+    } catch {
+        return $false
+    }
+}
+
+function Find-PinnedPython {
+    $candidates = [System.Collections.Generic.List[string]]::new()
+
+    $launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
+    if ($launcher) {
+        try {
+            $candidate = & $launcher.Source "-3.12" -c "import sys; print(sys.executable)" 2>$null | Select-Object -Last 1
+            if ($LASTEXITCODE -eq 0 -and $candidate) {
+                $candidates.Add(([string]$candidate).Trim())
+            }
+        } catch {
+        }
+    }
+
+    $registryRoots = @(
+        "Registry::HKEY_CURRENT_USER\Software\Python\PythonCore",
+        "Registry::HKEY_LOCAL_MACHINE\Software\Python\PythonCore",
+        "Registry::HKEY_LOCAL_MACHINE\Software\WOW6432Node\Python\PythonCore"
+    )
+    foreach ($registryRoot in $registryRoots) {
+        Get-ChildItem -LiteralPath $registryRoot -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSChildName -like "3.12*" } |
+            ForEach-Object {
+                try {
+                    $installPathKey = Get-Item -LiteralPath (Join-Path $_.PSPath "InstallPath") -ErrorAction Stop
+                    $installPath = [string]$installPathKey.GetValue("")
+                    if ($installPath) {
+                        $candidates.Add((Join-Path $installPath "python.exe"))
+                    }
+                } catch {
+                }
+            }
+    }
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (Test-PinnedPython $candidate) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
+function Copy-LocalPython {
+    param([Parameter(Mandatory = $true)][string]$SourcePython)
+
+    $sourceRoot = & $SourcePython -c "import sys; print(sys.base_prefix)" | Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0 -or -not $sourceRoot) {
+        throw "Could not resolve the existing Python base directory."
+    }
+    $sourceRoot = ([string]$sourceRoot).Trim()
+    $sourcePython = Join-Path $sourceRoot "python.exe"
+    if (-not (Test-PinnedPython $sourcePython)) {
+        throw "The existing Python installation failed the version, architecture or signature check."
+    }
+
+    if (Test-Path -LiteralPath $PythonDir) {
+        $entries = @(Get-ChildItem -LiteralPath $PythonDir -Force -ErrorAction SilentlyContinue)
+        if ($entries.Count -gt 0) {
+            $backup = "$PythonDir.incomplete-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Move-Item -LiteralPath $PythonDir -Destination $backup
+            Write-Warning "The incomplete python_env was preserved as $backup"
+        }
+    }
+    New-Item -ItemType Directory -Path $PythonDir -Force | Out-Null
+
+    Write-Host "Creating an isolated local copy from signed Python $($Profile.python.version): $sourceRoot"
+    $excludedSitePackages = Join-Path $sourceRoot "Lib\site-packages"
+    $excludedScripts = Join-Path $sourceRoot "Scripts"
+    & robocopy.exe $sourceRoot $PythonDir /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP /XD $excludedSitePackages $excludedScripts
+    $robocopyExitCode = $LASTEXITCODE
+    if ($robocopyExitCode -gt 7) {
+        throw "Could not create the local Python copy. Robocopy exit code: $robocopyExitCode."
+    }
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        throw "The local Python copy does not contain $Python."
+    }
+
+    & $Python -m ensurepip --upgrade
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not bootstrap pip in the local Python copy."
+    }
+    $localVersion = & $Python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"
+    if ($LASTEXITCODE -ne 0 -or $localVersion -ne [string]$Profile.python.version) {
+        throw "The local Python copy failed validation."
+    }
+}
+
 function Assert-Host {
     Write-Step "Checking Windows, RX 6700 XT and free space"
 
@@ -100,6 +215,17 @@ function Install-LocalPython {
         throw "-SkipPython was specified, but $Python does not exist."
     }
 
+    # The python.org EXE intentionally supports a single registered installation
+    # of a given version. If 3.12.9 is already registered, it can return success
+    # while ignoring TargetDir. Reuse only an exact, 64-bit, PSF-signed install
+    # and make a clean application-local copy instead.
+    $existingPython = Find-PinnedPython
+    if ($existingPython) {
+        Write-Step "Preparing local Python $($Profile.python.version) from the existing signed installation"
+        Copy-LocalPython $existingPython
+        return
+    }
+
     Write-Step "Installing signed Python $($Profile.python.version) into python_env"
     New-Item -ItemType Directory -Path $Downloads -Force | Out-Null
     $installer = Join-Path $Downloads "python-$($Profile.python.version)-amd64.exe"
@@ -129,9 +255,20 @@ function Install-LocalPython {
         "Shortcuts=0",
         "AssociateFiles=0"
     )
+    $installLog = Join-Path $Downloads "python-$($Profile.python.version)-install.log"
+    $installArguments = @("/log", "`"$installLog`"") + $installArguments
     $process = Start-Process -FilePath $installer -ArgumentList $installArguments -Wait -PassThru
-    if ($process.ExitCode -ne 0 -or -not (Test-Path $Python)) {
-        throw "Python installation failed with exit code $($process.ExitCode)."
+    if ($process.ExitCode -ne 0) {
+        throw "Python installation failed with exit code $($process.ExitCode). See $installLog"
+    }
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        $existingPython = Find-PinnedPython
+        if ($existingPython) {
+            Write-Warning "The Python installer returned success but reused its registered installation instead of TargetDir."
+            Copy-LocalPython $existingPython
+            return
+        }
+        throw "Python installer returned success but $Python was not created. See $installLog"
     }
 }
 
