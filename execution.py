@@ -20,6 +20,7 @@ import comfy.model_patcher
 import comfy.model_prefetch
 import comfy_aimdo.model_vbar
 from comfy.internal_logging import detail
+from comfy.queue_state import QueueStateError, load_queue_state, quarantine_queue_state, save_queue_state
 
 from latent_preview import set_preview_method
 import nodes
@@ -1249,7 +1250,7 @@ async def validate_prompt(prompt_id, prompt, partial_execution_list: Union[list[
 MAXIMUM_HISTORY_SIZE = 10000
 
 class PromptQueue:
-    def __init__(self, server):
+    def __init__(self, server, state_file=None):
         self.server = server
         self.mutex = threading.RLock()
         self.not_empty = threading.Condition(self.mutex)
@@ -1258,10 +1259,61 @@ class PromptQueue:
         self.currently_running = {}
         self.history = {}
         self.flags = {}
+        self.state_file = state_file
+        self.restored_next_number = 0
+        self._restore_state()
+
+    def _restore_state(self):
+        if not self.state_file:
+            return
+        try:
+            state = load_queue_state(self.state_file)
+            if state is None:
+                return
+            # A process can terminate after its atomic snapshot but before its
+            # current task reaches history. Retry such a task at least once.
+            self.queue = list(state.running) + list(state.pending)
+            heapq.heapify(self.queue)
+            self.history = state.history
+            self.restored_next_number = state.next_number
+            logging.info(
+                "Restored %d pending prompt(s) and %d history item(s) from %s.",
+                len(self.queue),
+                len(self.history),
+                self.state_file,
+            )
+        except QueueStateError as err:
+            quarantined = quarantine_queue_state(self.state_file)
+            suffix = f" Moved it to {quarantined}." if quarantined else ""
+            logging.error("Queue state is invalid: %s.%s", err, suffix)
+
+    def _persist_state_locked(self):
+        if not self.state_file:
+            return True
+        try:
+            save_queue_state(
+                self.state_file,
+                pending=list(self.queue),
+                running=list(self.currently_running.values()),
+                history=self.history,
+                next_number=max(
+                    self.restored_next_number,
+                    getattr(self.server, "number", 0),
+                ),
+            )
+            return True
+        except QueueStateError as err:
+            logging.error("Could not persist the prompt queue: %s", err)
+            return False
+
+    def persist_state_for_restart(self):
+        with self.mutex:
+            return self._persist_state_locked()
 
     def put(self, item):
         with self.mutex:
             heapq.heappush(self.queue, item)
+            self._persist_state_locked()
             self.server.queue_updated()
             self.not_empty.notify()
 
@@ -1275,6 +1327,7 @@ class PromptQueue:
             i = self.task_counter
             self.currently_running[i] = copy.deepcopy(item)
             self.task_counter += 1
+            self._persist_state_locked()
             self.server.queue_updated()
             return (item, i)
 
@@ -1303,6 +1356,7 @@ class PromptQueue:
                 'status': status_dict,
             }
             self.history[prompt[1]].update(history_result)
+            self._persist_state_locked()
             self.server.queue_updated()
 
     # Note: slow
@@ -1346,6 +1400,7 @@ class PromptQueue:
     def wipe_queue(self):
         with self.mutex:
             self.queue = []
+            self._persist_state_locked()
             self.server.queue_updated()
 
     def delete_queue_item(self, function):
@@ -1357,6 +1412,7 @@ class PromptQueue:
                     else:
                         self.queue.pop(x)
                         heapq.heapify(self.queue)
+                    self._persist_state_locked()
                     self.server.queue_updated()
                     return True
         return False
@@ -1391,10 +1447,12 @@ class PromptQueue:
     def wipe_history(self):
         with self.mutex:
             self.history = {}
+            self._persist_state_locked()
 
     def delete_history_item(self, id_to_delete):
         with self.mutex:
             self.history.pop(id_to_delete, None)
+            self._persist_state_locked()
 
     def set_flag(self, name, data):
         with self.mutex:

@@ -357,7 +357,11 @@ if ($DisablePostPromptMemoryFlush) {
     $EffectivePostPromptStrategy = "None"
 }
 if ($EffectivePostPromptStrategy -eq "Recycle") {
-    $ComfyArgs += "--restart-process-after-prompt"
+    $QueueStateFile = Join-Path $Root "user\rx6700xt-h3-queue-state.json"
+    $ComfyArgs += @(
+        "--restart-process-after-prompt",
+        "--queue-state-file", $QueueStateFile
+    )
 } elseif ($EffectivePostPromptStrategy -eq "Flush") {
     $ComfyArgs += "--free-memory-after-prompt"
 }
@@ -377,7 +381,7 @@ if ($Profile -eq "Performance64GB") {
     Write-Host "Pinned   : $PinnedMemoryLimitGiB GiB maximum, $AsyncOffloadStreams async streams"
 }
 if ($EffectivePostPromptStrategy -eq "Recycle") {
-    Write-Host "Repeat   : restart the supervised GPU process after every prompt"
+    Write-Host "Repeat   : restart the GPU process; preserve pending queue and history"
 } elseif ($EffectivePostPromptStrategy -eq "Flush") {
     Write-Host "Repeat   : release models and GPU allocator after every prompt"
 } else {

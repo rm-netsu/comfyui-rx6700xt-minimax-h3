@@ -470,6 +470,11 @@ def prompt_worker(q, server_instance):
                 asset_seeder.resume()
 
         if restart_process_after_prompt:
+            if not q.persist_state_for_restart():
+                logging.error(
+                    "The process will stay alive because its pending queue could not be persisted safely."
+                )
+                continue
             logging.info(
                 "Prompt complete. Restarting the supervised ComfyUI process to reset the HIP/WDDM context."
             )

@@ -20,9 +20,9 @@ its output is saved, ComfyUI exits with a private restart status. The launcher
 waits two seconds and starts a fresh process on the same address and port. The
 browser remains open and reconnects to the server.
 
-Queue only one prompt at a time. ComfyUI's pending queue is process-local, so
-additional queued prompts cannot survive the recycle. Saved output files are
-not affected.
+This limitation was removed in r13. The local queue journal now preserves
+pending prompts and history across each supervised recycle. See
+[`R13-DURABLE-QUEUE.md`](R13-DURABLE-QUEUE.md).
 
 ## Alternative strategies
 

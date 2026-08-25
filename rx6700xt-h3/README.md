@@ -212,8 +212,11 @@ tracked AIMDO buffer and pinned registration had been released. Model files,
 outputs, and the persistent Triton cache are not removed. The browser remains
 open and reconnects to the restarted server.
 
-Queue only one prompt at a time because pending queue entries live inside the
-process being recycled.
+The default recycle strategy keeps an atomic journal under
+`user\rx6700xt-h3-queue-state.json`, so pending local prompts, their order,
+workflow metadata, seeds, and visible history survive each process restart.
+Authenticated Comfy API tokens are never journaled; such a prompt suppresses
+the restart instead. See [`R13-DURABLE-QUEUE.md`](R13-DURABLE-QUEUE.md).
 
 The older ordered flush can still be selected for diagnostics, or all
 post-prompt handling can be disabled for small workflows:

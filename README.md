@@ -163,8 +163,9 @@ every completed prompt. Hardware testing showed that releasing all tracked
 AIMDO buffers and pinned registrations was insufficient: the second sampler
 still slowed down inside the long-lived Windows HIP/WDDM context. Process
 recycling resets that context without changing model weights, sampling
-parameters, output files, or Triton's persistent compilation cache. Queue one
-prompt at a time because pending queue entries are process-local.
+parameters, output files, or Triton's persistent compilation cache. An atomic
+local journal preserves pending prompts, workflow metadata, priority, seeds,
+and history across each recycle, so multiple local jobs can remain queued.
 
 For diagnostics, the previous in-process flush remains available:
 
@@ -174,6 +175,8 @@ For diagnostics, the previous in-process flush remains available:
 
 The validated workaround and its alternatives are documented in
 [`rx6700xt-h3/R12-PROCESS-RECYCLE.md`](rx6700xt-h3/R12-PROCESS-RECYCLE.md).
+Queue persistence and its local security boundary are documented in
+[`rx6700xt-h3/R13-DURABLE-QUEUE.md`](rx6700xt-h3/R13-DURABLE-QUEUE.md).
 
 Do not use ComfyUI's `--high-ram` option with this build. It enables aggressive
 node caching and bypasses the bounded pin-eviction policy. Keep the Windows page

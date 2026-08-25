@@ -203,6 +203,7 @@ parser.add_argument("--disable-pinned-memory", action="store_true", help="Disabl
 parser.add_argument("--pinned-memory-limit", type=float, default=None, metavar="GB", help="Limit pinned host memory to the specified number of GB.")
 parser.add_argument("--free-memory-after-prompt", action="store_true", help="Unload models, clear the execution cache, and release unused device memory after each prompt.")
 parser.add_argument("--restart-process-after-prompt", action="store_true", help="Exit with the supervised-restart status after each completed prompt so the next prompt uses a fresh accelerator process.")
+parser.add_argument("--queue-state-file", type=str, default=None, help="Persist pending prompts and history across supervised process restarts.")
 
 parser.add_argument("--mmap-torch-files", action="store_true", help="Use mmap when loading ckpt/pt files.")
 parser.add_argument("--disable-mmap", action="store_true", help="Don't use mmap when loading safetensors.")

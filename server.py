@@ -223,11 +223,13 @@ class PromptServer():
         self.node_replace_manager = NodeReplaceManager()
         self.internal_routes = InternalRoutes(self)
         self.supports = ["custom_nodes_from_web"]
-        self.prompt_queue = execution.PromptQueue(self)
+        self.number = 0
+        queue_state_file = args.queue_state_file if args.restart_process_after_prompt else None
+        self.prompt_queue = execution.PromptQueue(self, state_file=queue_state_file)
         self.loop = loop
         self.messages = asyncio.Queue()
         self.client_session:Optional[aiohttp.ClientSession] = None
-        self.number = 0
+        self.number = max(self.number, self.prompt_queue.restored_next_number)
 
         middlewares = [cache_control, deprecation_warning]
         if args.enable_compress_response_body:
