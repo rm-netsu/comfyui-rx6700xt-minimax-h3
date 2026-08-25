@@ -14,19 +14,30 @@ function Test-Administrator {
 }
 
 function Test-NativeBuildHeaders {
-    $programFilesX86 = ${env:ProgramFiles(x86)}
-    if (-not $programFilesX86) {
+    $programRoots = @(
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)}
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+    if (-not $programRoots) {
         return $false
     }
 
-    $msvcHeader = Get-ChildItem `
-        -Path (Join-Path $programFilesX86 "Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include\stdlib.h") `
-        -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    $sdkHeader = Get-ChildItem `
-        -Path (Join-Path $programFilesX86 "Windows Kits\10\Include\*\ucrt\stdlib.h") `
-        -ErrorAction SilentlyContinue |
-        Select-Object -First 1
+    $msvcHeader = $null
+    $sdkHeader = $null
+    foreach ($programRoot in $programRoots) {
+        if (-not $msvcHeader) {
+            $msvcHeader = Get-ChildItem `
+                -Path (Join-Path $programRoot "Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include\stdlib.h") `
+                -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+        }
+        if (-not $sdkHeader) {
+            $sdkHeader = Get-ChildItem `
+                -Path (Join-Path $programRoot "Windows Kits\10\Include\*\ucrt\stdlib.h") `
+                -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+        }
+    }
     return [bool]($msvcHeader -and $sdkHeader)
 }
 

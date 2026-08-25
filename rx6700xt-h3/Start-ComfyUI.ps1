@@ -169,18 +169,25 @@ if ($HipLld) {
     $env:TRITON_HIP_LLD_PATH = $HipLld
 }
 
-$ProgramFilesX86 = ${env:ProgramFiles(x86)}
+$ProgramRoots = @(
+    $env:ProgramFiles,
+    ${env:ProgramFiles(x86)}
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
 $MsvcStdlib = $null
 $WindowsSdkStdlib = $null
-if ($ProgramFilesX86) {
-    $MsvcStdlib = Get-ChildItem `
-        -Path (Join-Path $ProgramFilesX86 "Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include\stdlib.h") `
-        -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    $WindowsSdkStdlib = Get-ChildItem `
-        -Path (Join-Path $ProgramFilesX86 "Windows Kits\10\Include\*\ucrt\stdlib.h") `
-        -ErrorAction SilentlyContinue |
-        Select-Object -First 1
+foreach ($ProgramRoot in $ProgramRoots) {
+    if (-not $MsvcStdlib) {
+        $MsvcStdlib = Get-ChildItem `
+            -Path (Join-Path $ProgramRoot "Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include\stdlib.h") `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
+    if (-not $WindowsSdkStdlib) {
+        $WindowsSdkStdlib = Get-ChildItem `
+            -Path (Join-Path $ProgramRoot "Windows Kits\10\Include\*\ucrt\stdlib.h") `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
 }
 if (-not $MsvcStdlib -or -not $WindowsSdkStdlib) {
     throw "Triton AMD requires MSVC x64/x86 Build Tools and Windows SDK headers. Run install-build-tools-rx6700xt-h3.bat as administrator, then restart this launcher."
