@@ -22,7 +22,9 @@ downloads, a low-VRAM workflow, and an RDNA2-compatible W4A8/INT8 execution path
 - Fused packed-INT4-to-INT8 decoding with reduced temporary memory use.
 - Pinned Python, PyTorch, ROCm, Triton, Comfy Kitchen, and custom-node revisions.
 - Resumable model downloads with revision, size, and SHA-256 validation.
-- Local-only and LAN launchers with conservative 12 GiB VRAM defaults.
+- A default 64 GiB performance profile with bounded pinned memory and
+  two-stream asynchronous weight offload.
+- Conservative Balanced and Safe profiles for lower-memory or unstable systems.
 
 ## Supported configuration
 
@@ -71,6 +73,15 @@ Start ComfyUI locally:
 .\start-minimax-h3-local.bat
 ```
 
+The default `Performance64GB` profile requires at least 56 GiB of detected
+physical RAM. It keeps compressed model weights in system memory, permits smart
+VRAM residency, caps pinned host memory at 8 GiB, and uses two asynchronous
+offload streams. For a 32 GiB machine, launch with:
+
+```powershell
+.\start-minimax-h3-local.bat -Profile Balanced
+```
+
 Load the included starter workflow:
 
 ```text
@@ -109,6 +120,21 @@ an unnecessary FP32 activation copy. It does not yet fuse the weight decoder
 into the GEMM itself, so one INT8 buffer for the current layer is still
 materialized. A direct W4A8×A8 kernel remains experimental until it can be
 benchmarked on physical `gfx1031` hardware.
+
+## Memory profiles
+
+`Performance64GB` is the default for the supported 64 GiB target. It avoids
+disk-backed offload, leaves smart memory enabled, and overlaps weight transfers
+with GPU execution. The pinned-memory limit can be adjusted without editing the
+launcher:
+
+```powershell
+.\start-minimax-h3-local.bat -PinnedMemoryLimitGiB 6 -AsyncOffloadStreams 2
+```
+
+Do not use ComfyUI's `--high-ram` option with this build. It enables aggressive
+node caching and bypasses the bounded pin-eviction policy. Keep the Windows page
+file system-managed even with 64 GiB RAM.
 
 ## Network access
 

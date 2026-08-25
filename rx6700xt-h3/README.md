@@ -41,7 +41,7 @@ required for its MiniMax H3 path and would add unrelated failure modes.
 
 - Windows 10 22H2 build 19045+ or Windows 11 x64.
 - Radeon RX 6700 XT or RX 6750 XT (`PCI DEV_73DF`, `gfx1031`).
-- At least 32 GiB system RAM; 64 GiB is recommended.
+- At least 32 GiB system RAM; the default performance profile requires 64 GiB.
 - A system-managed Windows page file.
 - Approximately 55 GiB free disk space for the default installation and models.
 - Git for Windows and a current AMD Software: Adrenalin Edition driver.
@@ -145,6 +145,28 @@ The starter profile is intentionally conservative: 608×352, two seconds, 15
 steps, and no Turbo LoRA. Increase duration first and resolution second. H3 must
 offload weights to system RAM on a 12 GiB card; this is expected and does not
 mean that the matrix operations run on the CPU.
+
+The launchers default to `Performance64GB`. This mode keeps compressed weights
+in RAM, enables smart VRAM residency, uses two asynchronous offload streams,
+and caps pinned host memory at 8 GiB. The existing ComfyUI offload streams
+provide the staging buffers, so the profile does not allocate a second model
+cache.
+
+The cap and stream count can be adjusted explicitly:
+
+```powershell
+.\start-minimax-h3-local.bat -PinnedMemoryLimitGiB 6 -AsyncOffloadStreams 2
+```
+
+Do not add `--fast-disk` or `--high-ram` to this profile. The complete default
+model set fits in 64 GiB RAM, while `--high-ram` would enable aggressive node
+caching and relax pin eviction.
+
+On a machine with less than 56 GiB detected physical RAM, use Balanced mode:
+
+```powershell
+.\start-minimax-h3-local.bat -Profile Balanced
+```
 
 If the Balanced profile resets the driver or runs out of memory, try Safe mode:
 

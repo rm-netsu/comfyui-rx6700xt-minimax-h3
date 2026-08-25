@@ -200,6 +200,7 @@ parser.add_argument("--fast", nargs="*", type=PerformanceFeature, help="Enable s
 parser.add_argument("--debug-hang", action="store_true", help="Enable stack trace dumps on Ctrl-C for debugging hangs.")
 
 parser.add_argument("--disable-pinned-memory", action="store_true", help="Disable pinned memory use.")
+parser.add_argument("--pinned-memory-limit", type=float, default=None, metavar="GB", help="Limit pinned host memory to the specified number of GB.")
 
 parser.add_argument("--mmap-torch-files", action="store_true", help="Use mmap when loading ckpt/pt files.")
 parser.add_argument("--disable-mmap", action="store_true", help="Don't use mmap when loading safetensors.")
@@ -281,6 +282,9 @@ else:
 
 if args.cache_ram is not None and len(args.cache_ram) > 2:
     parser.error("--cache-ram accepts at most two values: active GB and inactive GB")
+
+if args.pinned_memory_limit is not None and args.pinned_memory_limit <= 0:
+    parser.error("--pinned-memory-limit must be greater than zero")
 
 if args.high_ram:
     args.cache_classic = True

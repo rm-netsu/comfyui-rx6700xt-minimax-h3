@@ -2,12 +2,16 @@
 param(
     [switch]$Lan,
     [switch]$ConfigureFirewall,
-    [ValidateSet("Balanced", "Safe")]
-    [string]$Profile = "Balanced",
+    [ValidateSet("Performance64GB", "Balanced", "Safe")]
+    [string]$Profile = "Performance64GB",
     [ValidateRange(1, 65535)]
     [int]$Port = 8188,
     [ValidateRange(0.25, 4.0)]
     [double]$ReserveVramGiB = 0.8,
+    [ValidateRange(1.0, 16.0)]
+    [double]$PinnedMemoryLimitGiB = 8.0,
+    [ValidateRange(1, 4)]
+    [int]$AsyncOffloadStreams = 2,
     [switch]$NoBrowser,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ExtraArgs
@@ -23,6 +27,12 @@ $GpuLog = Join-Path $Root "gpu_detect_debug.log"
 
 if (-not (Test-Path $Python) -or -not (Test-Path $RocmSdk)) {
     throw "The pinned runtime is missing. Run install-rx6700xt-h3.bat first."
+}
+
+$ComputerSystem = Get-CimInstance Win32_ComputerSystem
+$TotalRamGiB = [math]::Round([double]$ComputerSystem.TotalPhysicalMemory / 1GB, 1)
+if ($Profile -eq "Performance64GB" -and $TotalRamGiB -lt 56.0) {
+    throw "Performance64GB requires at least 56 GiB of physical RAM. Detected $TotalRamGiB GiB. Use -Profile Balanced."
 }
 
 $detectedArch = (& $Python (Join-Path $Root "detect_gpu.py") 2>$GpuLog | Select-Object -Last 1).Trim()
@@ -108,16 +118,23 @@ $ComfyArgs = @(
     "--port", $Port.ToString(),
     "--reserve-vram", $ReserveVramGiB.ToString([Globalization.CultureInfo]::InvariantCulture),
     "--cache-none",
-    "--disable-smart-memory",
-    "--disable-pinned-memory",
     "--use-quad-cross-attention",
     "--disable-triton-backend",
     "--disable-api-nodes"
 )
 
-if ($Profile -eq "Balanced") {
+if ($Profile -eq "Performance64GB") {
+    $ComfyArgs += @(
+        "--enable-dynamic-vram",
+        "--vram-headroom", "0.8",
+        "--async-offload", $AsyncOffloadStreams.ToString(),
+        "--pinned-memory-limit", $PinnedMemoryLimitGiB.ToString([Globalization.CultureInfo]::InvariantCulture)
+    )
+} elseif ($Profile -eq "Balanced") {
+    $ComfyArgs += @("--disable-smart-memory", "--disable-pinned-memory")
     $ComfyArgs += @("--enable-dynamic-vram", "--vram-headroom", "0.8")
 } else {
+    $ComfyArgs += @("--disable-smart-memory", "--disable-pinned-memory")
     $ComfyArgs += @("--disable-dynamic-vram", "--lowvram", "--disable-cuda-graphs")
 }
 if (-not $NoBrowser -and -not $Lan) {
@@ -131,6 +148,10 @@ Write-Host "`nMiniMax H3 / RX 6700 XT profile" -ForegroundColor Cyan
 Write-Host "GPU arch : $detectedArch"
 Write-Host "ROCm     : $RocmRoot"
 Write-Host "Mode     : $Profile"
+Write-Host "RAM      : $TotalRamGiB GiB"
+if ($Profile -eq "Performance64GB") {
+    Write-Host "Pinned   : $PinnedMemoryLimitGiB GiB maximum, $AsyncOffloadStreams async streams"
+}
 Write-Host "URL      : http://$ListenAddress`:$Port"
 Write-Host "Workflow : sample-workflows\MiniMax_H3_RX6700XT_W4A8_2s.json"
 Write-Host ""

@@ -1585,6 +1585,8 @@ if not args.disable_pinned_memory:
             MAX_PINNED_MEMORY = ram * 0.40  # Windows limit is apparently 50%
         else:
             MAX_PINNED_MEMORY = max(ram * 0.40, min(ram * 0.90, ram - 4 * 1024 ** 3, ram + get_disk_swap_total() - 16 * 1024 ** 3))
+        if args.pinned_memory_limit is not None:
+            MAX_PINNED_MEMORY = min(MAX_PINNED_MEMORY, int(args.pinned_memory_limit * 1024 ** 3))
         logging.info("Enabled pinned memory {}".format(MAX_PINNED_MEMORY // (1024 * 1024)))
 
 PINNING_ALLOWED_TYPES = set(["Tensor", "Parameter", "QuantizedTensor"])

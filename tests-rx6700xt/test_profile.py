@@ -64,6 +64,17 @@ class ProfileTests(unittest.TestCase):
         launcher = (PROFILE_DIR / "Start-ComfyUI.ps1").read_text(encoding="utf-8")
         self.assertIn('$env:TRITON_CACHE_AUTOTUNING = "1"', launcher)
 
+    def test_64gb_profile_uses_bounded_async_offload(self):
+        launcher = (PROFILE_DIR / "Start-ComfyUI.ps1").read_text(encoding="utf-8")
+        self.assertIn('[string]$Profile = "Performance64GB"', launcher)
+        self.assertIn('"--async-offload", $AsyncOffloadStreams.ToString()', launcher)
+        self.assertIn('"--pinned-memory-limit", $PinnedMemoryLimitGiB.ToString(', launcher)
+
+        cli_args = (ROOT / "comfy" / "cli_args.py").read_text(encoding="utf-8")
+        memory_management = (ROOT / "comfy" / "model_management.py").read_text(encoding="utf-8")
+        self.assertIn('parser.add_argument("--pinned-memory-limit"', cli_args)
+        self.assertIn("MAX_PINNED_MEMORY = min(MAX_PINNED_MEMORY", memory_management)
+
     def test_profile_user_facing_text_is_english(self):
         paths = [ROOT / "README.md", ROOT / "sample-workflows" / "MiniMax_H3_RX6700XT_W4A8_2s.json"]
         paths.extend(PROFILE_DIR.rglob("*.md"))
