@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "licenses": [
+    {
+      "name": "MiniMax-H3 Community License Agreement",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"
+    },
+    {
+      "name": "Winnougan quantization repository (Apache-2.0)",
+      "url": "https://huggingface.co/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI"
+    }
+  ],
+  "models": [
+    {
+      "id": "fl2va-w4a8",
+      "variant": "fl2va",
+      "role": "diffusion",
+      "default": true,
+      "repo": "Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI",
+      "revision": "2b6945259df70193ab7249af5a251a69b151f6ee",
+      "path": "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
+      "destination": "models/diffusion_models/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
+      "size": 12540857840,
+      "sha256": "8b624de0ab7554bb507c4486093d4c93e0bf2eb2a40c2382f26eb0af7cd97407"
+    },
+    {
+      "id": "ref2va-w4a8",
+      "variant": "ref2va",
+      "role": "diffusion",
+      "default": false,
+      "repo": "Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI",
+      "revision": "2b6945259df70193ab7249af5a251a69b151f6ee",
+      "path": "minimax_h3_ref2va_pruned-w4a8_convrot_pruned.safetensors",
+      "destination": "models/diffusion_models/minimax_h3_ref2va_pruned-w4a8_convrot_pruned.safetensors",
+      "size": 12540857840,
+      "sha256": "16be87247dff1f49c7141d6bcde4c0465fc254128e2de60e34aebc744a8177df"
+    },
+    {
+      "id": "text-int4",
+      "variant": "shared",
+      "role": "text_encoder",
+      "text_profile": "int4",
+      "default": true,
+      "repo": "Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI",
+      "revision": "2b6945259df70193ab7249af5a251a69b151f6ee",
+      "path": "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
+      "destination": "models/text_encoders/qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
+      "size": 14173709116,
+      "sha256": "a97a557136057a8bcf6f2459b0875aeee3e8274408bd6616b669b41caefdb48d"
+    },
+    {
+      "id": "text-w4a8",
+      "variant": "shared",
+      "role": "text_encoder",
+      "text_profile": "w4a8",
+      "default": false,
+      "repo": "Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI",
+      "revision": "2b6945259df70193ab7249af5a251a69b151f6ee",
+      "path": "qwen3vl_32b_minimax_h3-w4a8_convrot.safetensors",
+      "destination": "models/text_encoders/qwen3vl_32b_minimax_h3-w4a8_convrot.safetensors",
+      "size": 15697532972,
+      "sha256": "808e3b351e71e3dd2444e2cdd6accc701e5b40254ede13d481936e6332c7a0e2"
+    },
+    {
+      "id": "video-vae",
+      "variant": "shared",
+      "role": "vae",
+      "default": true,
+      "repo": "Comfy-Org/MiniMax-H3",
+      "revision": "d6cfb4e54cfb3b4e650edc5590bb1de10abba08e",
+      "path": "vae/minimax_h3_video_vae_fp16.safetensors",
+      "destination": "models/vae/minimax_h3_video_vae_fp16.safetensors",
+      "size": 5207808496,
+      "sha256": "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522"
+    },
+    {
+      "id": "audio-vae",
+      "variant": "shared",
+      "role": "vae",
+      "default": true,
+      "repo": "Comfy-Org/MiniMax-H3",
+      "revision": "d6cfb4e54cfb3b4e650edc5590bb1de10abba08e",
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "destination": "models/vae/minimax_h3_audio_vae_fp32.safetensors",
+      "size": 605254808,
+      "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48"
+    },
+    {
+      "id": "turbo-8step",
+      "variant": "fl2va",
+      "role": "lora",
+      "default": false,
+      "repo": "Comfy-Org/MiniMax-H3",
+      "revision": "d6cfb4e54cfb3b4e650edc5590bb1de10abba08e",
+      "path": "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "destination": "models/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "size": 1956193000,
+      "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e"
+    }
+  ]
+}

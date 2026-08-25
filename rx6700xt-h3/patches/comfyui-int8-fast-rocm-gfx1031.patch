@@ -1,0 +1,166 @@
+diff --git a/int8_fused_kernel.py b/int8_fused_kernel.py
+index b821ede..a211fee 100644
+--- a/int8_fused_kernel.py
++++ b/int8_fused_kernel.py
+@@ -2,6 +2,9 @@ import torch
+ import triton
+ import triton.language as tl
+ 
++
++GFX1031_W4A8_OPTIMIZED = True
++
+ # =============================================================================
+ # Kernel 1: Fused Row-wise Quantization (FP16/BF16 -> INT8 + Scale)
+ # =============================================================================
+@@ -120,8 +123,8 @@ def _int8_matmul_dequant_kernel(
+ 
+     # 1. Prepare Pointers for A and B
+     # A block pointer: [BLOCK_M, BLOCK_K]
+-    offs_am = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)) % M
+-    offs_bn = (pid_n * BLOCK_N + tl.arange(0, BLOCK_N)) % N
++    offs_am = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
++    offs_bn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+     offs_k = tl.arange(0, BLOCK_K)
+     
+     a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
+@@ -132,8 +135,16 @@ def _int8_matmul_dequant_kernel(
+     
+     for k in range(0, tl.cdiv(K, BLOCK_K)):
+         # Load chunks
+-        a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_K, other=0.0)
+-        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_K, other=0.0)
++        a = tl.load(
++            a_ptrs,
++            mask=(offs_am[:, None] < M) & (offs_k[None, :] < K - k * BLOCK_K),
++            other=0.0,
++        )
++        b = tl.load(
++            b_ptrs,
++            mask=(offs_k[:, None] < K - k * BLOCK_K) & (offs_bn[None, :] < N),
++            other=0.0,
++        )
+         
+         # Matrix Multiply (Int8 inputs -> Int32 accum)
+         accumulator += tl.dot(a, b)
+@@ -146,7 +157,7 @@ def _int8_matmul_dequant_kernel(
+     
+     # Load dynamic scales
+     # A Scale is per-row [M, 1]
+-    scale_a = tl.load(a_scale_ptr + offs_am) # Vector [BLOCK_M]
++    scale_a = tl.load(a_scale_ptr + offs_am, mask=offs_am < M, other=0.0) # Vector [BLOCK_M]
+     
+     # B Scale is scalar or tensor.
+     scale_b = tl.load(b_scale_ptr) 
+@@ -161,7 +172,7 @@ def _int8_matmul_dequant_kernel(
+ 
+     # Add Bias if present
+     if HAS_BIAS:
+-        bias = tl.load(bias_ptr + offs_bn) # Vector [BLOCK_N]
++        bias = tl.load(bias_ptr + offs_bn, mask=offs_bn < N, other=0.0) # Vector [BLOCK_N]
+         c = c + bias[None, :]
+ 
+     # 4. Store Result (Cast to output dtype, usually FP16)
+@@ -281,8 +292,8 @@ def _int8_matmul_dequant_per_row_kernel(
+     pid_n = (pid % num_pid_in_group) // group_size_m
+ 
+     # 1. Prepare Pointers for A and B
+-    offs_am = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)) % M
+-    offs_bn = (pid_n * BLOCK_N + tl.arange(0, BLOCK_N)) % N
++    offs_am = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
++    offs_bn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+     offs_k = tl.arange(0, BLOCK_K)
+ 
+     a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
+@@ -292,8 +303,16 @@ def _int8_matmul_dequant_per_row_kernel(
+     accumulator = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.int32)
+ 
+     for k in range(0, tl.cdiv(K, BLOCK_K)):
+-        a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_K, other=0.0)
+-        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_K, other=0.0)
++        a = tl.load(
++            a_ptrs,
++            mask=(offs_am[:, None] < M) & (offs_k[None, :] < K - k * BLOCK_K),
++            other=0.0,
++        )
++        b = tl.load(
++            b_ptrs,
++            mask=(offs_k[:, None] < K - k * BLOCK_K) & (offs_bn[None, :] < N),
++            other=0.0,
++        )
+         accumulator += tl.dot(a, b)
+         a_ptrs += BLOCK_K * stride_ak
+         b_ptrs += BLOCK_K * stride_bk
+@@ -301,10 +320,10 @@ def _int8_matmul_dequant_per_row_kernel(
+     # 3. Fused Epilogue (Dequantize & Bias)
+ 
+     # A Scale is per-row [M, 1]
+-    scale_a = tl.load(a_scale_ptr + offs_am)  # Vector [BLOCK_M]
++    scale_a = tl.load(a_scale_ptr + offs_am, mask=offs_am < M, other=0.0)  # Vector [BLOCK_M]
+ 
+     # B Scale is per-row [N, 1] (the key difference from the scalar kernel)
+-    scale_b = tl.load(b_scale_ptr + offs_bn)  # Vector [BLOCK_N]
++    scale_b = tl.load(b_scale_ptr + offs_bn, mask=offs_bn < N, other=0.0)  # Vector [BLOCK_N]
+ 
+     c = accumulator.to(tl.float32)
+ 
+@@ -314,7 +333,7 @@ def _int8_matmul_dequant_per_row_kernel(
+     c = c * total_scale
+ 
+     if HAS_BIAS:
+-        bias = tl.load(bias_ptr + offs_bn)
++        bias = tl.load(bias_ptr + offs_bn, mask=offs_bn < N, other=0.0)
+         c = c + bias[None, :]
+ 
+     # 4. Store Result
+@@ -339,7 +358,7 @@ def triton_int8_linear_per_row(x: torch.Tensor, weight: torch.Tensor, weight_sca
+     N = weight.shape[0]
+ 
+     # 2. Dynamic Activation Quantization
+-    x_int8, x_scale = triton_quantize_rowwise(x_2d.float())
++    x_int8, x_scale = triton_quantize_rowwise(x_2d)
+ 
+     # 3. Allocate Output
+     output = torch.empty((M, N), device=x.device, dtype=compute_dtype)
+diff --git a/rocm_int8_kitchen_patch.py b/rocm_int8_kitchen_patch.py
+index 3a6c845..287b21f 100644
+--- a/rocm_int8_kitchen_patch.py
++++ b/rocm_int8_kitchen_patch.py
+@@ -98,6 +98,11 @@ try:
+ except ImportError:
+     ck_w4a8_eager = None  # older comfy_kitchen without W4A8 support
+ 
++try:
++    import comfy_kitchen.backends.triton.w4a8_int8 as ck_w4a8_triton
++except ImportError:
++    ck_w4a8_triton = None
++
+ try:
+     # Normal case: loaded as part of the custom_nodes package by ComfyUI
+     from .int8_fused_kernel import triton_int8_linear, triton_int8_linear_per_row
+@@ -252,8 +257,14 @@ def _apply_patch():
+     if ck_w4a8_eager is not None:
+         ck_w4a8_eager.int8_linear = rocm_int8_linear
+ 
++    w4a8_dequant = "eager"
++    if ck_w4a8_eager is not None and ck_w4a8_triton is not None:
++        ck_w4a8_triton.int8_linear = rocm_int8_linear
++        ck_w4a8_eager._dequant_int4_grouped_to_int8 = ck_w4a8_triton._dequant_int4_grouped_to_int8
++        w4a8_dequant = "fused Triton"
++
+     log.info(f"[comfyui-int8-fast-rocm] {reason} -- patched registry.get_implementation('int8_linear') "
+-             f"and the W4A8 eager backend's direct int8_linear reference -> rocm_int8_linear (Triton GEMM)")
++             f"and W4A8 -> {w4a8_dequant} INT4 decode + rocm_int8_linear (Triton GEMM)")
+ 
+ 
+ _apply_patch()
+@@ -314,6 +325,10 @@ def smoke_test(device="cuda"):
+         "comfy_kitchen.backends.eager.w4a8_int8.int8_linear was NOT patched -- "
+         "Path B (W4A8) is still calling the original, broken implementation."
+     )
++    if ck_w4a8_triton is not None:
++        assert ck_w4a8_eager._dequant_int4_grouped_to_int8 is ck_w4a8_triton._dequant_int4_grouped_to_int8, (
++            "W4A8 is still using the eager multi-temporary INT4 decoder."
++        )
+ 
+     group_size, convrot_groupsize = 16, 256
+     Kw = 512  # must be divisible by 16, group_size, and convrot_groupsize

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "name": "MiniMax H3 / RX 6700 XT (gfx1031)",
+  "target": {
+    "os": "Windows 10/11 x64",
+    "gpu": "AMD Radeon RX 6700 XT",
+    "pci_device_id": "VEN_1002&DEV_73DF",
+    "gfx": "gfx1031",
+    "vram_gib": 12,
+    "minimum_ram_gib": 32,
+    "recommended_ram_gib": 64,
+    "minimum_free_disk_gib_without_models": 18,
+    "minimum_free_disk_gib_with_default_models": 55
+  },
+  "python": {
+    "version": "3.12.9",
+    "url": "https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe",
+    "sha256": "2a52993092a19cfdffe126e2eeac46a4265e25705614546604ad44988e040c0f"
+  },
+  "rocm": {
+    "index_url": "https://rocm.nightlies.amd.com/whl-multi-arch/",
+    "build_date": "20260728",
+    "torch": "2.12.0+rocm7.15.0a20260728",
+    "torchvision": "0.27.0+rocm7.15.0a20260728",
+    "torchaudio": "2.11.0+rocm7.15.0a20260728",
+    "device_package": "amd-torch-device-gfx1031",
+    "device_package_version": "2.12.0+rocm7.15.0a20260728",
+    "sdk_devel": "7.15.0a20260728"
+  },
+  "extensions": {
+    "triton_windows": "3.7.0.post26",
+    "int8_fast_rocm": {
+      "repository": "https://github.com/patientx/ComfyUI-INT8-Fast-ROCM.git",
+      "commit": "78e9875550df441c17ed2a225deae90c4211a09f",
+      "local_patch_sha256": "036c163239d8d60e17a37929d3736d08a84cdc78cfc5f9e6aa87cb1c6ad5be46"
+    }
+  },
+  "source": {
+    "comfyui_rocm_repository": "https://github.com/patientx-cfz/comfyui-rocm.git",
+    "base_commit": "066420efbe1c689a8bd9158cfe3976c8f7e06156",
+    "workflow_templates_commit": "2ded761bde3af3b4c8e905e162f45551cbec12ea"
+  }
+}

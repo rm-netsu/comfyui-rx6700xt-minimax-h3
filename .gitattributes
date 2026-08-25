@@ -1,0 +1,5 @@
+/web/assets/** linguist-generated
+/web/** linguist-vendored
+comfy_api_nodes/apis/__init__.py linguist-generated
+.github/workflows/ruff.yml merge=ours
+.github/workflows/update-api-stubs.yml merge=ours
