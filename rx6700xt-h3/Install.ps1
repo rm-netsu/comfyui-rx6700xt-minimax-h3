@@ -35,6 +35,27 @@ function Invoke-External {
     }
 }
 
+function Test-GitPatchApplied {
+    param(
+        [Parameter(Mandatory = $true)][string]$Git,
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$Patch
+    )
+
+    # `git apply --reverse --check` is intentionally allowed to fail when the
+    # patch has not been applied yet. Windows PowerShell promotes native stderr
+    # to a terminating NativeCommandError while ErrorActionPreference is Stop,
+    # so keep this expected probe local and return only its exit status.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        & $Git -C $Repository apply --reverse --check $Patch 2>$null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 function Get-NormalizedTextSha256 {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -374,6 +395,23 @@ function Install-Int8Patch {
         )
     }
 
+    # A new --no-checkout clone, and an install interrupted immediately after
+    # that clone, contain only .git. Populate that exact safe state before any
+    # status or reverse-patch probes. Never checkout over user-created files.
+    $workTreeEntries = @(
+        Get-ChildItem -LiteralPath $destination -Force -ErrorAction Stop |
+            Where-Object { $_.Name -ne ".git" }
+    )
+    if ($workTreeEntries.Count -eq 0) {
+        Write-Host "Completing the pinned custom-node checkout after an interrupted clone."
+        Invoke-External -FilePath $git.Source -ArgumentList @(
+            "-C", $destination, "fetch", "--depth", "1", "origin", $node.commit
+        )
+        Invoke-External -FilePath $git.Source -ArgumentList @(
+            "-C", $destination, "checkout", "--detach", $node.commit
+        )
+    }
+
     $actualCommit = (& $git.Source -C $destination rev-parse HEAD 2>$null).Trim()
     $dirty = @(& $git.Source -C $destination status --porcelain)
     if ($LASTEXITCODE -ne 0) {
@@ -382,8 +420,10 @@ function Install-Int8Patch {
 
     $expectedDirtyPaths = @("int8_fused_kernel.py", "rocm_int8_kitchen_patch.py")
     $dirtyPaths = @($dirty | ForEach-Object { $_.Substring(3).Trim('"') })
-    & $git.Source -C $destination apply --reverse --check $applyPatch 2>$null
-    $optimizationAlreadyApplied = $LASTEXITCODE -eq 0
+    $optimizationAlreadyApplied = Test-GitPatchApplied `
+        -Git $git.Source `
+        -Repository $destination `
+        -Patch $applyPatch
     $onlyExpectedChanges = $dirtyPaths.Count -eq $expectedDirtyPaths.Count -and
         @($dirtyPaths | Where-Object { $_ -notin $expectedDirtyPaths }).Count -eq 0
 
@@ -418,8 +458,10 @@ function Install-Int8Patch {
         )
     }
 
-    & $git.Source -C $destination apply --reverse --check $applyPatch 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Test-GitPatchApplied `
+        -Git $git.Source `
+        -Repository $destination `
+        -Patch $applyPatch)) {
         throw "The gfx1031 W4A8 optimization was not applied cleanly."
     }
 }
