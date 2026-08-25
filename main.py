@@ -378,6 +378,7 @@ def prompt_worker(q, server_instance):
             timeout = max(gc_collect_interval - (current_time - last_gc_collect), 0.0)
 
         queue_item = q.get(timeout=timeout)
+        free_memory_after_prompt = queue_item is not None and args.free_memory_after_prompt
         if queue_item is not None:
             item, item_id = queue_item
             execution_start_time = time.perf_counter()
@@ -419,7 +420,23 @@ def prompt_worker(q, server_instance):
                 register_output_files(paths, job_id=prompt_id)
 
         flags = q.get_flags()
-        free_memory = flags.get("free_memory", False)
+        free_memory = flags.get("free_memory", False) or free_memory_after_prompt
+
+        if free_memory_after_prompt:
+            logging.info("Releasing models and device memory after prompt.")
+
+        if free_memory and comfy.memory_management.aimdo_enabled:
+            try:
+                released, registered_before, registered_after = comfy.model_management.release_dynamic_vram_host_memory()
+                logging.info(
+                    "DynamicVRAM pre-unload cleanup released %.1f MiB of staged host memory; "
+                    "registered pinned memory %.1f -> %.1f MiB.",
+                    released / (1024 ** 2),
+                    registered_before / (1024 ** 2),
+                    registered_after / (1024 ** 2),
+                )
+            except Exception as err:
+                logging.warning("DynamicVRAM pre-unload cleanup failed: %s", err, exc_info=True)
 
         if flags.get("unload_models", free_memory):
             comfy.model_management.unload_all_models()

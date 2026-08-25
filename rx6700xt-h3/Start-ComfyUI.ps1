@@ -12,6 +12,7 @@ param(
     [double]$PinnedMemoryLimitGiB = 8.0,
     [ValidateRange(1, 4)]
     [int]$AsyncOffloadStreams = 2,
+    [switch]$DisablePostPromptMemoryFlush,
     [switch]$NoBrowser,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ExtraArgs
@@ -168,6 +169,23 @@ if ($HipLld) {
     $env:TRITON_HIP_LLD_PATH = $HipLld
 }
 
+$ProgramFilesX86 = ${env:ProgramFiles(x86)}
+$MsvcStdlib = $null
+$WindowsSdkStdlib = $null
+if ($ProgramFilesX86) {
+    $MsvcStdlib = Get-ChildItem `
+        -Path (Join-Path $ProgramFilesX86 "Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include\stdlib.h") `
+        -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    $WindowsSdkStdlib = Get-ChildItem `
+        -Path (Join-Path $ProgramFilesX86 "Windows Kits\10\Include\*\ucrt\stdlib.h") `
+        -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+}
+if (-not $MsvcStdlib -or -not $WindowsSdkStdlib) {
+    throw "Triton AMD requires MSVC x64/x86 Build Tools and Windows SDK headers. Run install-build-tools-rx6700xt-h3.bat as administrator, then restart this launcher."
+}
+
 # RDNA2-safe backend policy. Do not add HSA_OVERRIDE_GFX_VERSION here.
 $env:TORCH_BACKENDS_CUDA_FLASH_SDP_ENABLED = "0"
 $env:TORCH_BACKENDS_CUDA_MEM_EFF_SDP_ENABLED = "0"
@@ -252,6 +270,9 @@ if ($Profile -eq "Performance64GB") {
     $ComfyArgs += @("--disable-smart-memory", "--disable-pinned-memory")
     $ComfyArgs += @("--disable-dynamic-vram", "--lowvram", "--disable-cuda-graphs")
 }
+if (-not $DisablePostPromptMemoryFlush) {
+    $ComfyArgs += "--free-memory-after-prompt"
+}
 if (-not $NoBrowser -and -not $Lan) {
     $ComfyArgs += "--auto-launch"
 }
@@ -266,6 +287,9 @@ Write-Host "Mode     : $Profile"
 Write-Host "RAM      : $TotalRamGiB GiB"
 if ($Profile -eq "Performance64GB") {
     Write-Host "Pinned   : $PinnedMemoryLimitGiB GiB maximum, $AsyncOffloadStreams async streams"
+}
+if (-not $DisablePostPromptMemoryFlush) {
+    Write-Host "Repeat   : release models and GPU allocator after every prompt"
 }
 Write-Host "URL      : http://$ListenAddress`:$Port"
 Write-Host "Workflow : sample-workflows\MiniMax_H3_RX6700XT_W4A8_2s.json"

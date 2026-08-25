@@ -2066,6 +2066,29 @@ def unload_all_models():
     for device in get_all_torch_devices():
         free_memory(1e30, device)
 
+def release_dynamic_vram_host_memory():
+    """Release AIMDO staging state while models are still discoverable.
+
+    ``unload_all_models`` removes models from ``current_loaded_models``.  The
+    dynamic pin eviction helpers use that list to find each model, so calling
+    them after an unload leaves committed host buffers and registrations alive
+    until every remaining Python reference is collected.  On Windows ROCm that
+    stale state can make a later sampler spill into shared memory and run much
+    slower than the first prompt.
+
+    Return the amount of staged host memory released and the registered pinned
+    byte counts before and after cleanup.  Non-DynamicVRAM configurations are a
+    no-op.
+    """
+    if not comfy.memory_management.aimdo_enabled:
+        return 0, 0, 0
+
+    registered_before = TOTAL_PINNED_MEMORY
+    reset_cast_buffers()
+    released = free_pins(1e32, evict_active=True)
+    registered_after = TOTAL_PINNED_MEMORY
+    return released, registered_before, registered_after
+
 def unload_model_and_clones(model: ModelPatcher, unload_additional_models=True, all_devices=False):
     'Unload only model and its clones - primarily for multigpu cloning purposes.'
     initial_keep_loaded: list[LoadedModel] = current_loaded_models.copy()

@@ -201,6 +201,7 @@ parser.add_argument("--debug-hang", action="store_true", help="Enable stack trac
 
 parser.add_argument("--disable-pinned-memory", action="store_true", help="Disable pinned memory use.")
 parser.add_argument("--pinned-memory-limit", type=float, default=None, metavar="GB", help="Limit pinned host memory to the specified number of GB.")
+parser.add_argument("--free-memory-after-prompt", action="store_true", help="Unload models, clear the execution cache, and release unused device memory after each prompt.")
 
 parser.add_argument("--mmap-torch-files", action="store_true", help="Use mmap when loading ckpt/pt files.")
 parser.add_argument("--disable-mmap", action="store_true", help="Don't use mmap when loading safetensors.")
