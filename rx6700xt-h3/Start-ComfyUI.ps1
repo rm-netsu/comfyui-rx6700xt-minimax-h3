@@ -147,6 +147,27 @@ $env:PATH = "$PythonDir;$PythonDir\Scripts;$RocmRoot\bin;$env:PATH"
 $env:HIP_PATH = $RocmRoot
 $env:ROCM_PATH = $RocmRoot
 
+# triton-windows bundles an x64 TinyCC implementation for its small JIT host
+# modules. An unrelated global CC/CXX override takes precedence and cannot
+# build a CPython win_amd64 extension. Remove the overrides only from this
+# launcher process; system settings and embedded toolchains are not modified.
+if (Test-Path Env:CC) {
+    Write-Warning "Ignoring inherited CC='$env:CC' for the Triton x64 runtime."
+    Remove-Item Env:CC
+}
+if (Test-Path Env:CXX) {
+    Write-Warning "Ignoring inherited CXX='$env:CXX' for the Triton x64 runtime."
+    Remove-Item Env:CXX
+}
+
+$HipLld = @(
+    (Join-Path $RocmRoot "bin\ld.lld.exe"),
+    (Join-Path $RocmRoot "llvm\bin\ld.lld.exe")
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if ($HipLld) {
+    $env:TRITON_HIP_LLD_PATH = $HipLld
+}
+
 # RDNA2-safe backend policy. Do not add HSA_OVERRIDE_GFX_VERSION here.
 $env:TORCH_BACKENDS_CUDA_FLASH_SDP_ENABLED = "0"
 $env:TORCH_BACKENDS_CUDA_MEM_EFF_SDP_ENABLED = "0"
