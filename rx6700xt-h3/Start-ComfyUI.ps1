@@ -169,28 +169,101 @@ if ($HipLld) {
     $env:TRITON_HIP_LLD_PATH = $HipLld
 }
 
-$ProgramRoots = @(
-    $env:ProgramFiles,
-    ${env:ProgramFiles(x86)}
-) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+$ProgramRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+    Select-Object -Unique
+$VisualStudioInstallPaths = @()
+$VsWhereCandidates = @(
+    (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"),
+    (Join-Path $env:ProgramFiles "Microsoft Visual Studio\Installer\vswhere.exe")
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+$VsWhereCommand = Get-Command vswhere.exe -ErrorAction SilentlyContinue
+if ($VsWhereCommand) {
+    $VsWhereCandidates += $VsWhereCommand.Source
+}
+foreach ($VsWherePath in ($VsWhereCandidates | Select-Object -Unique)) {
+    $VisualStudioInstallPaths += @(
+        & $VsWherePath `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath 2>$null
+    )
+}
+$VisualStudioInstallPaths = @($VisualStudioInstallPaths | Where-Object { $_ } | Select-Object -Unique)
+
+$WindowsSdkRoots = @()
+foreach ($RegistryPath in @(
+    "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots"
+)) {
+    $RegisteredRoot = (Get-ItemProperty -LiteralPath $RegistryPath -ErrorAction SilentlyContinue).KitsRoot10
+    if ($RegisteredRoot) {
+        $WindowsSdkRoots += $RegisteredRoot
+    }
+}
+foreach ($ProgramRoot in $ProgramRoots) {
+    $WindowsSdkRoots += Join-Path $ProgramRoot "Windows Kits\10"
+}
+$WindowsSdkRoots = @($WindowsSdkRoots | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique)
+
 $MsvcStdlib = $null
 $WindowsSdkStdlib = $null
-foreach ($ProgramRoot in $ProgramRoots) {
+foreach ($InstallPath in $VisualStudioInstallPaths) {
     if (-not $MsvcStdlib) {
         $MsvcStdlib = Get-ChildItem `
-            -Path (Join-Path $ProgramRoot "Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include\stdlib.h") `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-    }
-    if (-not $WindowsSdkStdlib) {
-        $WindowsSdkStdlib = Get-ChildItem `
-            -Path (Join-Path $ProgramRoot "Windows Kits\10\Include\*\ucrt\stdlib.h") `
+            -Path (Join-Path $InstallPath "VC\Tools\MSVC\*\include\stdlib.h") `
             -ErrorAction SilentlyContinue |
             Select-Object -First 1
     }
 }
-if (-not $MsvcStdlib -or -not $WindowsSdkStdlib) {
-    throw "Triton AMD requires MSVC x64/x86 Build Tools and Windows SDK headers. Run install-build-tools-rx6700xt-h3.bat as administrator, then restart this launcher."
+if (-not $MsvcStdlib) {
+    foreach ($ProgramRoot in $ProgramRoots) {
+        $MsvcStdlib = Get-ChildItem `
+            -Path (Join-Path $ProgramRoot "Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include\stdlib.h") `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($MsvcStdlib) {
+            break
+        }
+    }
+}
+foreach ($WindowsSdkRoot in $WindowsSdkRoots) {
+    if (-not $WindowsSdkStdlib) {
+        $WindowsSdkStdlib = Get-ChildItem `
+            -Path (Join-Path $WindowsSdkRoot "Include\*\ucrt\stdlib.h") `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
+}
+
+if ($MsvcStdlib -and $WindowsSdkStdlib) {
+    $MsvcInclude = $MsvcStdlib.Directory.FullName
+    $MsvcVersionRoot = Split-Path $MsvcInclude -Parent
+    $SdkIncludeVersionRoot = Split-Path $WindowsSdkStdlib.Directory.FullName -Parent
+    $SdkVersion = Split-Path $SdkIncludeVersionRoot -Leaf
+    $SdkRoot = Split-Path (Split-Path $SdkIncludeVersionRoot -Parent) -Parent
+    $NativeIncludePaths = @(
+        $MsvcInclude,
+        (Join-Path $SdkIncludeVersionRoot "ucrt"),
+        (Join-Path $SdkIncludeVersionRoot "shared"),
+        (Join-Path $SdkIncludeVersionRoot "um"),
+        (Join-Path $SdkIncludeVersionRoot "winrt")
+    ) | Where-Object { Test-Path -LiteralPath $_ }
+    $NativeLibraryPaths = @(
+        (Join-Path $MsvcVersionRoot "lib\x64"),
+        (Join-Path $SdkRoot "Lib\$SdkVersion\ucrt\x64"),
+        (Join-Path $SdkRoot "Lib\$SdkVersion\um\x64")
+    ) | Where-Object { Test-Path -LiteralPath $_ }
+    if ($env:INCLUDE) {
+        $NativeIncludePaths += $env:INCLUDE
+    }
+    if ($env:LIB) {
+        $NativeLibraryPaths += $env:LIB
+    }
+    $env:INCLUDE = $NativeIncludePaths -join ";"
+    $env:LIB = $NativeLibraryPaths -join ";"
+} else {
+    Write-Warning "MSVC or Windows SDK headers were not found during preflight. Continuing because Triton's cached AMD runtime may already be usable. If sampling later fails to compile hip_utils.c, run install-build-tools-rx6700xt-h3.bat as administrator."
 }
 
 # RDNA2-safe backend policy. Do not add HSA_OVERRIDE_GFX_VERSION here.

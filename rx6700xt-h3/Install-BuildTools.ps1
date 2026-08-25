@@ -14,16 +14,44 @@ function Test-Administrator {
 }
 
 function Test-NativeBuildHeaders {
-    $programRoots = @(
-        $env:ProgramFiles,
-        ${env:ProgramFiles(x86)}
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+    $programRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) |
+        Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+        Select-Object -Unique
     if (-not $programRoots) {
         return $false
     }
 
     $msvcHeader = $null
     $sdkHeader = $null
+    $vsWhereCandidates = @(
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"),
+        (Join-Path $env:ProgramFiles "Microsoft Visual Studio\Installer\vswhere.exe")
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    $vsWhereCommand = Get-Command vswhere.exe -ErrorAction SilentlyContinue
+    if ($vsWhereCommand) {
+        $vsWhereCandidates += $vsWhereCommand.Source
+    }
+    foreach ($vsWherePath in ($vsWhereCandidates | Select-Object -Unique)) {
+        $installPaths = @(
+            & $vsWherePath `
+                -products * `
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                -property installationPath 2>$null
+        )
+        foreach ($installPath in $installPaths) {
+            $msvcHeader = Get-ChildItem `
+                -Path (Join-Path $installPath "VC\Tools\MSVC\*\include\stdlib.h") `
+                -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($msvcHeader) {
+                break
+            }
+        }
+        if ($msvcHeader) {
+            break
+        }
+    }
+
     foreach ($programRoot in $programRoots) {
         if (-not $msvcHeader) {
             $msvcHeader = Get-ChildItem `
@@ -31,11 +59,28 @@ function Test-NativeBuildHeaders {
                 -ErrorAction SilentlyContinue |
                 Select-Object -First 1
         }
-        if (-not $sdkHeader) {
-            $sdkHeader = Get-ChildItem `
-                -Path (Join-Path $programRoot "Windows Kits\10\Include\*\ucrt\stdlib.h") `
-                -ErrorAction SilentlyContinue |
-                Select-Object -First 1
+    }
+
+    $sdkRoots = @()
+    foreach ($registryPath in @(
+        "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots"
+    )) {
+        $registeredRoot = (Get-ItemProperty -LiteralPath $registryPath -ErrorAction SilentlyContinue).KitsRoot10
+        if ($registeredRoot) {
+            $sdkRoots += $registeredRoot
+        }
+    }
+    foreach ($programRoot in $programRoots) {
+        $sdkRoots += Join-Path $programRoot "Windows Kits\10"
+    }
+    foreach ($sdkRoot in ($sdkRoots | Where-Object { $_ } | Select-Object -Unique)) {
+        $sdkHeader = Get-ChildItem `
+            -Path (Join-Path $sdkRoot "Include\*\ucrt\stdlib.h") `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($sdkHeader) {
+            break
         }
     }
     return [bool]($msvcHeader -and $sdkHeader)
