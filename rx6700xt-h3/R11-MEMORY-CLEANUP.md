@@ -1,5 +1,11 @@
 # r11 repeated-sampler cleanup
 
+> [!IMPORTANT]
+> Hardware testing on an RX 6700 XT showed that r11 releases all tracked pinned
+> memory but does not reset the degraded HIP/WDDM process state. r12 supersedes
+> this workaround with supervised process recycling. Use r11's `Flush` strategy
+> only for diagnostics.
+
 ## What changed
 
 On Windows ROCm, a completed DynamicVRAM prompt can leave AIMDO host staging

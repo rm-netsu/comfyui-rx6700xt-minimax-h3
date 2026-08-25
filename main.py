@@ -259,6 +259,9 @@ import hook_breaker_ac10a0
 import comfy.memory_management
 import comfy.model_patcher
 
+PROCESS_RESTART_EXIT_CODE = 75
+PROCESS_RESTART_REQUESTED = threading.Event()
+
 
 def dynamic_vram_supported():
     if comfy.model_management.is_nvidia():
@@ -378,7 +381,12 @@ def prompt_worker(q, server_instance):
             timeout = max(gc_collect_interval - (current_time - last_gc_collect), 0.0)
 
         queue_item = q.get(timeout=timeout)
-        free_memory_after_prompt = queue_item is not None and args.free_memory_after_prompt
+        restart_process_after_prompt = queue_item is not None and args.restart_process_after_prompt
+        free_memory_after_prompt = (
+            queue_item is not None
+            and args.free_memory_after_prompt
+            and not restart_process_after_prompt
+        )
         if queue_item is not None:
             item, item_id = queue_item
             execution_start_time = time.perf_counter()
@@ -460,6 +468,17 @@ def prompt_worker(q, server_instance):
                 if not asset_seeder.is_disabled():
                     asset_seeder.enqueue_enrich(roots=("output",), compute_hashes=args.enable_asset_hashing)
                 asset_seeder.resume()
+
+        if restart_process_after_prompt:
+            logging.info(
+                "Prompt complete. Restarting the supervised ComfyUI process to reset the HIP/WDDM context."
+            )
+            # Give the websocket sender a short window to deliver the completed
+            # status before the listening socket is recycled by the supervisor.
+            time.sleep(0.75)
+            PROCESS_RESTART_REQUESTED.set()
+            server_instance.loop.call_soon_threadsafe(server_instance.loop.stop)
+            return
 
 
 async def run(server_instance, address='', port=8188, verbose=True, call_on_start=None):
@@ -626,6 +645,12 @@ if __name__ == "__main__":
         event_loop.run_until_complete(x)
     except KeyboardInterrupt:
         logging.info("\nStopped server")
+    except RuntimeError as err:
+        if not PROCESS_RESTART_REQUESTED.is_set() or "Event loop stopped before Future completed" not in str(err):
+            raise
     finally:
         asset_seeder.shutdown()
         cleanup_temp()
+    if PROCESS_RESTART_REQUESTED.is_set():
+        logging.info("Stopped server for supervised process restart")
+        raise SystemExit(PROCESS_RESTART_EXIT_CODE)

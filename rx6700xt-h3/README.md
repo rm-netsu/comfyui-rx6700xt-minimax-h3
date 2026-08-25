@@ -45,11 +45,21 @@ required for its MiniMax H3 path and would add unrelated failure modes.
 - A system-managed Windows page file.
 - Approximately 55 GiB free disk space for the default installation and models.
 - Git for Windows and a current AMD Software: Adrenalin Edition driver.
+- Visual Studio C++ Build Tools with a Windows SDK for Triton's AMD host module.
 
 Use a short writable installation path such as
 `D:\AI\minimax-h3-rx6700xt`. Do not install under `Program Files`.
 
 ## Installation
+
+First, run this once from an elevated Command Prompt:
+
+```powershell
+.\install-build-tools-rx6700xt-h3.bat
+```
+
+This installs only the Microsoft C++ Build Tools workload and recommended
+Windows SDK; the Visual Studio IDE is not required.
 
 From the repository root, run:
 
@@ -64,6 +74,13 @@ scripts, grant permission only to the current shell:
 ```powershell
 Set-ExecutionPolicy -Scope Process RemoteSigned
 ```
+
+If the exact pinned Python 3.12.9 is already registered on the machine, the
+official Python EXE may return success while ignoring a second `TargetDir`.
+The profile installer detects that case, verifies the existing interpreter's
+version, architecture, and Python Software Foundation signature, then creates a
+clean application-local `python_env` copy. The registered installation is not
+modified.
 
 Then review the model licenses and authorize the downloads:
 
@@ -101,6 +118,10 @@ Before the first generation, run the full Triton INT8/W4A8 test:
 ```powershell
 .\diagnose-rx6700xt-h3.bat -Full -RequireModels
 ```
+
+The launcher and diagnostic ignore process-inherited `CC` and `CXX` overrides.
+This prevents an unrelated cross-compiler from being used to build Triton's
+native x64 helper module. The system environment is not modified.
 
 The report is written to `rx6700xt-h3-diagnostic.json`. It includes the package
 versions, detected architecture, VRAM, FP16 matrix test, external-node commit,
@@ -141,6 +162,31 @@ Load this workflow in ComfyUI:
 sample-workflows\MiniMax_H3_RX6700XT_W4A8_2s.json
 ```
 
+### Video plus reference editing
+
+The build also includes a native-core node kit for source-video editing:
+
+```powershell
+# General object/garment/prop replacement, about 9.2 GiB.
+.\download-video-edit-models.bat -AcceptLicenses -Pack Bernini
+
+# SAM3-tracked person/character replacement, about 26.7 GiB total.
+.\download-video-edit-models.bat -AcceptLicenses -Pack SCAIL
+```
+
+Load one of these workflows:
+
+```text
+sample-workflows\Video_Object_Replacement_Bernini_1.3B_RX6700XT.json
+sample-workflows\Character_Replacement_SCAIL2_INT8_RX6700XT.json
+```
+
+Bernini-R 1.3B is the recommended first path for an arbitrary object. SCAIL-2
+is the tracked, character-focused path. MiniMax H3 Ref2VA is a creative
+reference generator and is not described as a pixel-preserving video editor.
+See [`VIDEO_EDITING.md`](VIDEO_EDITING.md) for prompts, presets, limitations,
+and the recommended quality progression.
+
 The starter profile is intentionally conservative: 608×352, two seconds, 15
 steps, and no Turbo LoRA. Increase duration first and resolution second. H3 must
 offload weights to system RAM on a 12 GiB card; this is expected and does not
@@ -156,6 +202,25 @@ The cap and stream count can be adjusted explicitly:
 
 ```powershell
 .\start-minimax-h3-local.bat -PinnedMemoryLimitGiB 6 -AsyncOffloadStreams 2
+```
+
+The launcher uses supervised process recycling on `gfx1031`. A completed prompt
+is saved normally, then ComfyUI exits with a private restart status and the
+launcher starts a fresh process on the same address and port. This is required
+because hardware testing showed a severe second-run slowdown even after every
+tracked AIMDO buffer and pinned registration had been released. Model files,
+outputs, and the persistent Triton cache are not removed. The browser remains
+open and reconnects to the restarted server.
+
+Queue only one prompt at a time because pending queue entries live inside the
+process being recycled.
+
+The older ordered flush can still be selected for diagnostics, or all
+post-prompt handling can be disabled for small workflows:
+
+```powershell
+.\start-minimax-h3-local.bat -PostPromptStrategy Flush
+.\start-minimax-h3-local.bat -PostPromptStrategy None
 ```
 
 Do not add `--fast-disk` or `--high-ram` to this profile. The complete default

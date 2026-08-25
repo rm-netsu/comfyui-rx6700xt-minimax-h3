@@ -36,6 +36,7 @@ downloads, a low-VRAM workflow, and an RDNA2-compatible W4A8/INT8 execution path
 | VRAM | 12 GiB |
 | System RAM | 32 GiB minimum; 64 GiB recommended |
 | Free disk space | About 55 GiB for the default environment and models |
+| Native JIT headers | Visual Studio C++ Build Tools with a Windows SDK |
 
 Other GPUs are intentionally rejected by the profile installer unless the
 hardware check is explicitly overridden for development. They have not been
@@ -47,6 +48,16 @@ Install [Git for Windows](https://git-scm.com/download/win) and a current AMD
 Software: Adrenalin Edition driver first. Do not place the repository under
 `Program Files`; a short writable path such as `D:\AI\minimax-h3-rx6700xt` is
 recommended.
+
+Install the minimal native build prerequisite from an elevated Command Prompt:
+
+```powershell
+.\install-build-tools-rx6700xt-h3.bat
+```
+
+The helper downloads Microsoft's signed Visual Studio Build Tools bootstrapper,
+verifies its Authenticode signature, and installs the C++ Build Tools workload
+with the recommended Windows SDK. It does not install the Visual Studio IDE.
 
 Open PowerShell in the repository directory and run:
 
@@ -87,6 +98,21 @@ Load the included starter workflow:
 ```text
 sample-workflows\MiniMax_H3_RX6700XT_W4A8_2s.json
 ```
+
+For source-video editing with a reference image, install the lightweight
+Bernini-R 1.3B pack and load the included replacement workflow:
+
+```powershell
+.\download-video-edit-models.bat -AcceptLicenses -Pack Bernini
+```
+
+```text
+sample-workflows\Video_Object_Replacement_Bernini_1.3B_RX6700XT.json
+```
+
+For SAM3-tracked person or character replacement, use `-Pack SCAIL` and load
+`Character_Replacement_SCAIL2_INT8_RX6700XT.json`. The full workflow guide is
+in [`rx6700xt-h3/VIDEO_EDITING.md`](rx6700xt-h3/VIDEO_EDITING.md).
 
 The starter workflow uses 608×352 output, a two-second duration, 15 steps, and
 no Turbo LoRA. Confirm that it completes before increasing duration or
@@ -131,6 +157,23 @@ launcher:
 ```powershell
 .\start-minimax-h3-local.bat -PinnedMemoryLimitGiB 6 -AsyncOffloadStreams 2
 ```
+
+The RX 6700 XT launcher supervises ComfyUI and starts a fresh GPU process after
+every completed prompt. Hardware testing showed that releasing all tracked
+AIMDO buffers and pinned registrations was insufficient: the second sampler
+still slowed down inside the long-lived Windows HIP/WDDM context. Process
+recycling resets that context without changing model weights, sampling
+parameters, output files, or Triton's persistent compilation cache. Queue one
+prompt at a time because pending queue entries are process-local.
+
+For diagnostics, the previous in-process flush remains available:
+
+```powershell
+.\start-minimax-h3-local.bat -PostPromptStrategy Flush
+```
+
+The validated workaround and its alternatives are documented in
+[`rx6700xt-h3/R12-PROCESS-RECYCLE.md`](rx6700xt-h3/R12-PROCESS-RECYCLE.md).
 
 Do not use ComfyUI's `--high-ram` option with this build. It enables aggressive
 node caching and bypasses the bounded pin-eviction policy. Keep the Windows page
@@ -177,6 +220,9 @@ using `diagnose-rx6700xt-h3.bat -Full`.
 - W4A8 may have a small quality loss relative to the larger INT8 checkpoint.
 - The first run compiles and autotunes Triton kernels. Later runs reuse the
   persistent cache.
+- The launcher ignores inherited `CC` and `CXX` values inside the ComfyUI
+  process so a cross-compiler cannot be selected for Triton's x64 host module.
+  System-wide compiler settings are not changed.
 - Performance claims require measurements on physical RX 6700 XT hardware; the
   repository tests validate configuration and patch integrity, not throughput.
 

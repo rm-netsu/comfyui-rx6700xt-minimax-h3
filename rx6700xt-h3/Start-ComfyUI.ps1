@@ -12,6 +12,8 @@ param(
     [double]$PinnedMemoryLimitGiB = 8.0,
     [ValidateRange(1, 4)]
     [int]$AsyncOffloadStreams = 2,
+    [ValidateSet("Recycle", "Flush", "None")]
+    [string]$PostPromptStrategy = "Recycle",
     [switch]$DisablePostPromptMemoryFlush,
     [switch]$NoBrowser,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -350,7 +352,13 @@ if ($Profile -eq "Performance64GB") {
     $ComfyArgs += @("--disable-smart-memory", "--disable-pinned-memory")
     $ComfyArgs += @("--disable-dynamic-vram", "--lowvram", "--disable-cuda-graphs")
 }
-if (-not $DisablePostPromptMemoryFlush) {
+$EffectivePostPromptStrategy = $PostPromptStrategy
+if ($DisablePostPromptMemoryFlush) {
+    $EffectivePostPromptStrategy = "None"
+}
+if ($EffectivePostPromptStrategy -eq "Recycle") {
+    $ComfyArgs += "--restart-process-after-prompt"
+} elseif ($EffectivePostPromptStrategy -eq "Flush") {
     $ComfyArgs += "--free-memory-after-prompt"
 }
 if (-not $NoBrowser -and -not $Lan) {
@@ -368,8 +376,12 @@ Write-Host "RAM      : $TotalRamGiB GiB"
 if ($Profile -eq "Performance64GB") {
     Write-Host "Pinned   : $PinnedMemoryLimitGiB GiB maximum, $AsyncOffloadStreams async streams"
 }
-if (-not $DisablePostPromptMemoryFlush) {
+if ($EffectivePostPromptStrategy -eq "Recycle") {
+    Write-Host "Repeat   : restart the supervised GPU process after every prompt"
+} elseif ($EffectivePostPromptStrategy -eq "Flush") {
     Write-Host "Repeat   : release models and GPU allocator after every prompt"
+} else {
+    Write-Host "Repeat   : keep the current GPU process after each prompt"
 }
 Write-Host "URL      : http://$ListenAddress`:$Port"
 Write-Host "Workflow : sample-workflows\MiniMax_H3_RX6700XT_W4A8_2s.json"
@@ -377,8 +389,15 @@ Write-Host ""
 
 Push-Location $Root
 try {
-    $comfyProcess = Invoke-NativeProcess -FilePath $Python -ArgumentList $ComfyArgs
-    exit $comfyProcess.ExitCode
+    $RestartExitCode = 75
+    while ($true) {
+        $comfyProcess = Invoke-NativeProcess -FilePath $Python -ArgumentList $ComfyArgs
+        if ($comfyProcess.ExitCode -ne $RestartExitCode) {
+            exit $comfyProcess.ExitCode
+        }
+        Write-Host "`nPrompt finished. Starting a fresh HIP/WDDM process..." -ForegroundColor Cyan
+        Start-Sleep -Seconds 2
+    }
 } finally {
     Pop-Location
 }
